@@ -11,9 +11,8 @@
     video { width: 100%; border-radius: 8px; background: #000; margin-top: 15px; font-size: 0; }
     button { padding: 12px 20px; font-size: 15px; border: none; border-radius: 6px; background: #007bff; color: white; cursor: pointer; margin: 5px; font-weight: bold; }
     button:disabled { background: #ccc; cursor: not-allowed; }
-    input { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; }
+    input { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; margin-bottom: 8px; }
     .section { margin-top: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
-    .my-id { font-size: 18px; font-weight: bold; color: #e63946; word-break: break-all; }
     .status { margin-top: 10px; font-size: 14px; color: #555; word-break: break-all; }
     .unmute-btn { background: #28a745; margin-top: 10px; display: none; }
   </style>
@@ -22,19 +21,20 @@
 
 <div class="card">
   <h2>👶 簡易ベビーカメラ</h2>
-  <p>この端末のID: <br><span id="my-id" class="my-id">接続中...</span></p>
 
   <!-- パターンA: カメラ（子機）の設定 -->
   <div class="section">
     <h3>📱 【子機】赤ちゃん側に置く</h3>
-    <button id="btn-cam" onclick="startCamera()">カメラ＆マイク起動</button>
-    <div id="cam-status" class="status">カメラ未起動</div>
+    <p style="font-size: 13px; color: #666;">好きな合言葉（半角英数字）を決めてください</p>
+    <input type="text" id="child-id-input" value="baby123" placeholder="合言葉（例: baby123）"><br>
+    <button id="btn-cam" onclick="startCamera()">カメラ起動＆待機</button>
+    <div id="cam-status" class="status">未起動</div>
   </div>
 
   <!-- パターンB: モニター（親機）の設定 -->
   <div class="section">
     <h3>👀 【親機】手元で見る</h3>
-    <input type="text" id="target-id" placeholder="子機のIDを入力">
+    <input type="text" id="target-id" value="baby123" placeholder="子機の合言葉を入力"><br>
     <button onclick="connectToCamera()">映像を見る</button>
     <div id="parent-status" class="status">未接続</div>
     <button id="btn-unmute" class="unmute-btn" onclick="unmuteAudio()">🔊 音声を有効化する</button>
@@ -45,72 +45,72 @@
 </div>
 
 <script>
-  // STUN / TURN（中継用）サーバーの設定
-  const peer = new Peer({
+  let peer = null;
+  let localStream = null;
+  const videoElem = document.getElementById('video-player');
+
+  const peerConfig = {
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        // 無料パブリックTURNサーバー（中継機能）
-        {
-          urls: 'turn:openrelay.metered.ca:80',
-          username: 'openrelay',
-          credential: 'openrelay'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443',
-          username: 'openrelay',
-          credential: 'openrelay'
-        }
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelay', credential: 'openrelay' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelay', credential: 'openrelay' }
       ]
     }
-  });
-
-  let localStream = null;
-  const videoElem = document.getElementById('video-player');
-
-  peer.on('open', (id) => {
-    document.getElementById('my-id').innerText = id;
-  });
-
-  peer.on('error', (err) => {
-    console.error("PeerJS Error:", err);
-    if (err.type === 'peer-unavailable') {
-      alert("指定されたIDの子機が見つかりません。IDを再確認してください。");
-    }
-  });
+  };
 
   // ① 子機（カメラ）の処理
   async function startCamera() {
+    const customId = document.getElementById('child-id-input').value.trim();
+    if (!customId) {
+      alert("合言葉を入力してください");
+      return;
+    }
+
     try {
-      // iPhoneとAndroid両方で動作しやすい解像度設定
+      // カメラ＆マイク起動
       localStream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: "environment",
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        },
+        video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
         audio: true
       });
       
       videoElem.srcObject = localStream;
       videoElem.muted = true;
       videoElem.play();
-      
-      document.getElementById('cam-status').innerText = "🟢 カメラ起動中（親機からの接続待ち）";
-      document.getElementById('btn-cam').disabled = true;
 
-      // 親機からの接続要求を受け取る
+      // 指定した合言葉でPeerサーバーに接続
+      peer = new Peer(customId, peerConfig);
+
+      peer.on('open', (id) => {
+        document.getElementById('cam-status').innerText = `🟢 待機中（合言葉: ${id}）`;
+        document.getElementById('btn-cam').disabled = true;
+        document.getElementById('child-id-input').disabled = true;
+      });
+
+      // エラー処理（すでに合言葉が使われている場合など）
+      peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          alert("この合言葉は既に使用されています。別の合言葉に変更してください。");
+        } else {
+          alert("通信エラー: " + err.type);
+        }
+        document.getElementById('cam-status').innerText = "❌ 接続失敗";
+      });
+
+      // 通信が切れたら自動再接続を試みる
+      peer.on('disconnected', () => {
+        peer.reconnect();
+      });
+
+      // 親機からの接続を受け取る
       peer.on('connection', (conn) => {
-        document.getElementById('cam-status').innerText = "🔵 親機を検出！映像を送信中...";
-        // iPhone/Androidでコーデック互換性を高めて発信する
-        const call = peer.call(conn.peer, localStream, {
-          videoBandwidth: 500 // 通信量を抑えて安定化
-        });
+        document.getElementById('cam-status').innerText = "🔵 親機を検出！映像送信中...";
+        peer.call(conn.peer, localStream);
       });
 
     } catch (err) {
-      alert("カメラの起動に失敗しました: " + err.message);
+      alert("カメラ起動エラー: " + err.message);
     }
   }
 
@@ -118,17 +118,39 @@
   function connectToCamera() {
     const targetId = document.getElementById('target-id').value.trim();
     if (!targetId) {
-      alert("子機のIDを入力してください");
+      alert("子機の合言葉を入力してください");
       return;
     }
 
-    document.getElementById('parent-status').innerText = "⏳ 子機にリクエスト送信中...";
+    document.getElementById('parent-status').innerText = "⏳ 子機を検索中...";
 
-    // iOS Safari対策：あらかじめvideo要素をロード状態にする
+    // iOS Safari対策：あらかじめvideoを再生準備状態にする
     videoElem.muted = true;
     videoElem.play().catch(() => {});
 
-    // 折り返し着信を待つ
+    // 親機用のランダムIDでPeer接続
+    if (!peer) {
+      peer = new Peer(peerConfig);
+    }
+
+    peer.on('open', () => {
+      sendRequest(targetId);
+    });
+
+    if (peer.open) {
+      sendRequest(targetId);
+    }
+
+    peer.on('error', (err) => {
+      if (err.type === 'peer-unavailable') {
+        document.getElementById('parent-status').innerText = "❌ 子機が見つかりません";
+        alert("子機が見つかりません。子機側で『カメラ起動＆待機』が完了しているか確認してください。");
+      } else {
+        document.getElementById('parent-status').innerText = "❌ エラー: " + err.type;
+      }
+    });
+
+    // 折り返し映像を受信
     peer.on('call', (call) => {
       document.getElementById('parent-status').innerText = "📡 映像を受信中...";
       call.answer();
@@ -138,25 +160,18 @@
         videoElem.srcObject = remoteStream;
         videoElem.play().then(() => {
           document.getElementById('btn-unmute').style.display = "inline-block";
-        }).catch(err => {
-          console.log("再生エラー:", err);
         });
       });
     });
+  }
 
-    // 子機へ接続を通知
+  function sendRequest(targetId) {
     const conn = peer.connect(targetId);
-
     conn.on('open', () => {
-      document.getElementById('parent-status').innerText = "⏳ 子機からの映像応答を待っています...";
-    });
-
-    conn.on('error', (err) => {
-      document.getElementById('parent-status').innerText = "❌ 接続失敗";
+      document.getElementById('parent-status').innerText = "⏳ 子機からの応答を待っています...";
     });
   }
 
-  // 親機で音声を再生する処理
   function unmuteAudio() {
     videoElem.muted = false;
     document.getElementById('btn-unmute').style.display = "none";
