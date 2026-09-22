@@ -1,153 +1,139 @@
 <!DOCTYPE html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>簡易ベビーカメラ</title>
-    <!-- PeerJS（WebRTCを簡単にするライブラリ）の読み込み -->
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-    <style>
-      body {
-        font-family: sans-serif;
-        background: #f0f2f5;
-        margin: 0;
-        padding: 20px;
-        text-align: center;
-      }
-      .card {
-        max-width: 480px;
-        margin: 0 auto;
-        background: #fff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-      }
-      video {
-        width: 100%;
-        border-radius: 8px;
-        background: #000;
-        margin-top: 15px;
-        font-size: 0;
-      }
-      button {
-        padding: 10px 20px;
-        font-size: 15px;
-        border: none;
-        border-radius: 6px;
-        background: #007bff;
-        color: white;
-        cursor: pointer;
-        margin: 5px;
-      }
-      button:disabled {
-        background: #ccc;
-        cursor: not-allowed;
-      }
-      input {
-        padding: 10px;
-        font-size: 15px;
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        width: 60%;
-      }
-      .section {
-        margin-top: 15px;
-        padding: 15px;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        background: #fafafa;
-      }
-      .my-id {
-        font-size: 18px;
-        font-weight: bold;
-        color: #e63946;
-        word-break: break-all;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h2>👶 簡易ベビーカメラ</h2>
-      <p>この端末のID: <br /><span id="my-id" class="my-id">接続中...</span></p>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>簡易ベビーカメラ</title>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 20px; text-align: center; }
+    .card { max-width: 480px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+    video { width: 100%; border-radius: 8px; background: #000; margin-top: 15px; font-size: 0; }
+    button { padding: 12px 20px; font-size: 15px; border: none; border-radius: 6px; background: #007bff; color: white; cursor: pointer; margin: 5px; font-weight: bold; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    input { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; }
+    .section { margin-top: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
+    .my-id { font-size: 18px; font-weight: bold; color: #e63946; word-break: break-all; }
+    .status { margin-top: 10px; font-size: 14px; color: #555; }
+    .unmute-btn { background: #28a745; margin-top: 10px; display: none; }
+  </style>
+</head>
+<body>
 
-      <!-- パターンA: カメラ（子機）の設定 -->
-      <div class="section">
-        <h3>📱 【子機】赤ちゃん側に置く</h3>
-        <button id="btn-cam" onclick="startCamera()">カメラ＆マイク起動</button>
-        <p id="cam-status" style="color: #666; font-size: 14px">カメラ未起動</p>
-      </div>
+<div class="card">
+  <h2>👶 簡易ベビーカメラ</h2>
+  <p>この端末のID: <br><span id="my-id" class="my-id">接続中...</span></p>
 
-      <!-- パターンB: モニター（親機）の設定 -->
-      <div class="section">
-        <h3>👀 【親機】手元で見る</h3>
-        <input type="text" id="target-id" placeholder="子機のIDを入力" />
-        <button onclick="connectToCamera()">映像を見る</button>
-      </div>
+  <!-- パターンA: カメラ（子機）の設定 -->
+  <div class="section">
+    <h3>📱 【子機】赤ちゃん側に置く</h3>
+    <button id="btn-cam" onclick="startCamera()">カメラ＆マイク起動</button>
+    <div id="cam-status" class="status">カメラ未起動</div>
+  </div>
 
-      <!-- 映像表示エリア -->
-      <video id="video-player" autoplay playsinline controls muted></video>
-    </div>
+  <!-- パターンB: モニター（親機）の設定 -->
+  <div class="section">
+    <h3>👀 【親機】手元で見る</h3>
+    <input type="text" id="target-id" placeholder="子機のIDを入力">
+    <button onclick="connectToCamera()">映像を見る</button>
+    <div id="parent-status" class="status">未接続</div>
+    <!-- 音声ブロック解除用ボタン -->
+    <button id="btn-unmute" class="unmute-btn" onclick="unmuteAudio()">🔊 音声を有効化する</button>
+  </div>
 
-    <script>
-      // PeerJSの初期化（自動で接続IDが割り当てられる）
-      const peer = new Peer();
-      let localStream = null;
+  <!-- 映像表示エリア -->
+  <video id="video-player" autoplay playsinline muted></video>
+</div>
 
-      // 自分のIDが確定したら表示
-      peer.on("open", (id) => {
-        document.getElementById("my-id").innerText = id;
+<script>
+  // GoogleのパブリックSTUNサーバーを指定してP2P接続率を上げる
+  const peer = new Peer({
+    config: {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    }
+  });
+
+  let localStream = null;
+  const videoElem = document.getElementById('video-player');
+
+  // 自分のIDが確定したら表示
+  peer.on('open', (id) => {
+    document.getElementById('my-id').innerText = id;
+  });
+
+  // ① 子機（カメラ）の処理
+  async function startCamera() {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: true
       });
+      
+      videoElem.srcObject = localStream;
+      videoElem.muted = true; // 子機側は消音
+      videoElem.play();
+      
+      document.getElementById('cam-status').innerText = "🟢 カメラ起動中（親機からの接続待ち）";
+      document.getElementById('btn-cam').disabled = true;
 
-      // ① 子機（カメラ）としての処理
-      async function startCamera() {
-        try {
-          // カメラ（外カメラ優先）とマイクを取得
-          localStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
-            audio: true,
-          });
+      // 親機から着信があったら映像を送り返す
+      peer.on('call', (call) => {
+        document.getElementById('cam-status').innerText = "🔵 親機と接続中！映像送信中...";
+        call.answer(localStream);
+      });
+    } catch (err) {
+      alert("カメラの起動に失敗しました: " + err.message);
+    }
+  }
 
-          // 自分の画面にもプレビューを表示
-          const videoElem = document.getElementById("video-player");
-          videoElem.srcObject = localStream;
-          videoElem.muted = true; // 子機側でハウリングしないよう消音
+  // ② 親機（モニター）の処理
+  function connectToCamera() {
+    const targetId = document.getElementById('target-id').value.trim();
+    if (!targetId) {
+      alert("子機のIDを入力してください");
+      return;
+    }
 
-          document.getElementById("cam-status").innerText =
-            "🟢 カメラ起動中（親機からの接続待ち）";
-          document.getElementById("btn-cam").disabled = true;
+    document.getElementById('parent-status').innerText = "⏳ 子機に接続中...";
 
-          // 親機から接続リクエスト（Call）が来たら自動で映像を返答する
-          peer.on("call", (call) => {
-            call.answer(localStream);
-          });
-        } catch (err) {
-          alert("カメラの起動に失敗しました: " + err.message);
-        }
-      }
+    // 【自動再生ブロック対策】ボタンを押した瞬間にまずビデオ要素を再生準備状態にする
+    videoElem.muted = true;
+    videoElem.play().catch(() => {});
 
-      // ② 親機（モニター）としての処理
-      function connectToCamera() {
-        const targetId = document.getElementById("target-id").value.trim();
-        if (!targetId) {
-          alert("子機のIDを入力してください");
-          return;
-        }
+    // 子機を呼び出す
+    const call = peer.call(targetId, new MediaStream());
+    
+    // 子機から映像が届いた時の処理
+    call.on('stream', (remoteStream) => {
+      document.getElementById('parent-status').innerText = "🟢 接続成功！映像を表示中";
+      videoElem.srcObject = remoteStream;
+      
+      // 自動再生ブロックを回避しながら再生開始
+      videoElem.play().then(() => {
+        // 音声を流すため「音声を有効化」ボタンを表示
+        document.getElementById('btn-unmute').style.display = "inline-block";
+      }).catch(err => {
+        console.log("再生エラー:", err);
+      });
+    });
 
-        // 子機に接続を要求（ダミーのストリームを渡して呼び出し）
-        const call = peer.call(targetId, new MediaStream());
+    call.on('error', (err) => {
+      document.getElementById('parent-status').innerText = "❌ 接続エラー";
+      alert("接続に失敗しました: " + err);
+    });
+  }
 
-        // 子機から映像ストリームが届いたら再生
-        call.on("stream", (remoteStream) => {
-          const videoElem = document.getElementById("video-player");
-          videoElem.srcObject = remoteStream;
-          videoElem.muted = false; // 親機側は音声を流す
-          videoElem.play();
-        });
+  // 親機側で音声を出すための処理
+  function unmuteAudio() {
+    videoElem.muted = false;
+    document.getElementById('btn-unmute').style.display = "none";
+    document.getElementById('parent-status').innerText = "🟢 映像・音声ともに再生中";
+  }
+</script>
 
-        call.on("error", (err) => {
-          alert("接続エラーが発生しました: " + err);
-        });
-      }
-    </script>
-  </body>
+</body>
 </html>
+
