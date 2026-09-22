@@ -14,7 +14,7 @@
     input { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; }
     .section { margin-top: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
     .my-id { font-size: 18px; font-weight: bold; color: #e63946; word-break: break-all; }
-    .status { margin-top: 10px; font-size: 14px; color: #555; }
+    .status { margin-top: 10px; font-size: 14px; color: #555; word-break: break-all; }
     .unmute-btn { background: #28a745; margin-top: 10px; display: none; }
   </style>
 </head>
@@ -37,7 +37,6 @@
     <input type="text" id="target-id" placeholder="子機のIDを入力">
     <button onclick="connectToCamera()">映像を見る</button>
     <div id="parent-status" class="status">未接続</div>
-    <!-- 音声ブロック解除用ボタン -->
     <button id="btn-unmute" class="unmute-btn" onclick="unmuteAudio()">🔊 音声を有効化する</button>
   </div>
 
@@ -46,12 +45,14 @@
 </div>
 
 <script>
-  // GoogleのパブリックSTUNサーバーを指定してP2P接続率を上げる
+  // STUNサーバー（接続経路検索用）を拡張
   const peer = new Peer({
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' }
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.services.mozilla.com' }
       ]
     }
   });
@@ -59,9 +60,16 @@
   let localStream = null;
   const videoElem = document.getElementById('video-player');
 
-  // 自分のIDが確定したら表示
+  // 自分のID確定処理
   peer.on('open', (id) => {
     document.getElementById('my-id').innerText = id;
+  });
+
+  peer.on('error', (err) => {
+    console.error("PeerJS Error:", err);
+    if (err.type === 'peer-unavailable') {
+      alert("指定されたIDの子機が見つかりません。IDを再確認してください。");
+    }
   });
 
   // ① 子機（カメラ）の処理
@@ -73,17 +81,19 @@
       });
       
       videoElem.srcObject = localStream;
-      videoElem.muted = true; // 子機側は消音
+      videoElem.muted = true;
       videoElem.play();
       
       document.getElementById('cam-status').innerText = "🟢 カメラ起動中（親機からの接続待ち）";
       document.getElementById('btn-cam').disabled = true;
 
-      // 親機から着信があったら映像を送り返す
-      peer.on('call', (call) => {
-        document.getElementById('cam-status').innerText = "🔵 親機と接続中！映像送信中...";
-        call.answer(localStream);
+      // 【折り返し接続】親機からデータリクエストを受け取ったら、子機から映像を発信する
+      peer.on('connection', (conn) => {
+        document.getElementById('cam-status').innerText = "🔵 親機を検出！映像を送信中...";
+        // 親機に向けて映像付きでCallする
+        peer.call(conn.peer, localStream);
       });
+
     } catch (err) {
       alert("カメラの起動に失敗しました: " + err.message);
     }
@@ -97,36 +107,39 @@
       return;
     }
 
-    document.getElementById('parent-status').innerText = "⏳ 子機に接続中...";
+    document.getElementById('parent-status').innerText = "⏳ 子機にリクエスト送信中...";
 
-    // 【自動再生ブロック対策】ボタンを押した瞬間にまずビデオ要素を再生準備状態にする
+    // 自動再生ブロック対策（事前にVideoを再生準備状態にする）
     videoElem.muted = true;
     videoElem.play().catch(() => {});
 
-    // 子機を呼び出す
-    const call = peer.call(targetId, new MediaStream());
-    
-    // 子機から映像が届いた時の処理
-    call.on('stream', (remoteStream) => {
-      document.getElementById('parent-status').innerText = "🟢 接続成功！映像を表示中";
-      videoElem.srcObject = remoteStream;
+    // 子機からの「折り返し映像着信」を待つ設定
+    peer.on('call', (call) => {
+      document.getElementById('parent-status').innerText = "📡 映像を受信中...";
+      call.answer(); // 応答する
       
-      // 自動再生ブロックを回避しながら再生開始
-      videoElem.play().then(() => {
-        // 音声を流すため「音声を有効化」ボタンを表示
-        document.getElementById('btn-unmute').style.display = "inline-block";
-      }).catch(err => {
-        console.log("再生エラー:", err);
+      call.on('stream', (remoteStream) => {
+        document.getElementById('parent-status').innerText = "🟢 接続成功！映像表示中";
+        videoElem.srcObject = remoteStream;
+        videoElem.play().then(() => {
+          document.getElementById('btn-unmute').style.display = "inline-block";
+        });
       });
     });
 
-    call.on('error', (err) => {
-      document.getElementById('parent-status').innerText = "❌ 接続エラー";
-      alert("接続に失敗しました: " + err);
+    // 子機へ「データ接続リクエスト」を送信する
+    const conn = peer.connect(targetId);
+
+    conn.on('open', () => {
+      document.getElementById('parent-status').innerText = "⏳ 子機からの映像応答を待っています...";
+    });
+
+    conn.on('error', (err) => {
+      document.getElementById('parent-status').innerText = "❌ 子機への接続に失敗しました";
     });
   }
 
-  // 親機側で音声を出すための処理
+  // 親機で音声を再生する処理
   function unmuteAudio() {
     videoElem.muted = false;
     document.getElementById('btn-unmute').style.display = "none";
@@ -136,4 +149,3 @@
 
 </body>
 </html>
-
