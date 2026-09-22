@@ -3,18 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>簡易ベビーカメラ</title>
+  <title>簡易ベビーカメラ (ナイトモード対応)</title>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <style>
     body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 20px; text-align: center; }
     .card { max-width: 480px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-    video { width: 100%; border-radius: 8px; background: #000; margin-top: 15px; font-size: 0; }
-    button { padding: 12px 20px; font-size: 15px; border: none; border-radius: 6px; background: #007bff; color: white; cursor: pointer; margin: 5px; font-weight: bold; }
+    video { width: 100%; border-radius: 8px; background: #000; margin-top: 15px; font-size: 0; transition: filter 0.2s ease; }
+    button { padding: 10px 16px; font-size: 14px; border: none; border-radius: 6px; background: #007bff; color: white; cursor: pointer; margin: 4px; font-weight: bold; }
     button:disabled { background: #ccc; cursor: not-allowed; }
-    input { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; margin-bottom: 8px; }
+    input[type="text"] { padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; width: 60%; margin-bottom: 8px; }
+    input[type="range"] { width: 70%; vertical-align: middle; }
     .section { margin-top: 15px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
     .status { margin-top: 10px; font-size: 14px; color: #555; word-break: break-all; }
     .unmute-btn { background: #28a745; margin-top: 10px; display: none; }
+    .night-controls { background: #2c3e50; color: #fff; text-align: left; padding: 12px; border-radius: 8px; margin-top: 15px; }
+    .night-controls label { font-size: 13px; display: inline-block; width: 100%; margin-bottom: 4px; }
   </style>
 </head>
 <body>
@@ -25,9 +28,9 @@
   <!-- パターンA: カメラ（子機）の設定 -->
   <div class="section">
     <h3>📱 【子機】赤ちゃん側に置く</h3>
-    <p style="font-size: 13px; color: #666;">好きな合言葉（半角英数字）を決めてください</p>
     <input type="text" id="child-id-input" value="baby123" placeholder="合言葉（例: baby123）"><br>
     <button id="btn-cam" onclick="startCamera()">カメラ起動＆待機</button>
+    <button id="btn-torch" onclick="toggleTorch()" style="background:#fd7e14; display:none;">💡 ライト点灯</button>
     <div id="cam-status" class="status">未起動</div>
   </div>
 
@@ -42,11 +45,32 @@
 
   <!-- 映像表示エリア -->
   <video id="video-player" autoplay playsinline muted></video>
+
+  <!-- 🌙 映像の明るさ・ナイトモード調整 -->
+  <div class="night-controls">
+    <div style="font-weight:bold; margin-bottom: 8px; text-align:center;">🌙 暗所カメラ補正（輝度調整）</div>
+    
+    <div>
+      <label>明るさ (輝度): <span id="val-bright">100%</span></label>
+      <input type="range" id="range-bright" min="100" max="300" value="100" oninput="applyVideoFilter()">
+    </div>
+    
+    <div style="margin-top: 8px;">
+      <label>くっきり感 (コントラスト): <span id="val-contrast">100%</span></label>
+      <input type="range" id="range-contrast" min="100" max="250" value="100" oninput="applyVideoFilter()">
+    </div>
+
+    <div style="text-align:center; margin-top: 12px;">
+      <button onclick="setNightPreset(true)" style="background:#6f42c1;">🌙 ナイトモード ON</button>
+      <button onclick="setNightPreset(false)" style="background:#6c757d;">リセット</button>
+    </div>
+  </div>
 </div>
 
 <script>
   let peer = null;
   let localStream = null;
+  let torchState = false;
   const videoElem = document.getElementById('video-player');
 
   const peerConfig = {
@@ -69,7 +93,6 @@
     }
 
     try {
-      // カメラ＆マイク起動
       localStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
         audio: true
@@ -79,7 +102,9 @@
       videoElem.muted = true;
       videoElem.play();
 
-      // 指定した合言葉でPeerサーバーに接続
+      // ライト（トーチ）機能が使える端末かチェック
+      checkTorchSupport();
+
       peer = new Peer(customId, peerConfig);
 
       peer.on('open', (id) => {
@@ -88,7 +113,6 @@
         document.getElementById('child-id-input').disabled = true;
       });
 
-      // エラー処理（すでに合言葉が使われている場合など）
       peer.on('error', (err) => {
         if (err.type === 'unavailable-id') {
           alert("この合言葉は既に使用されています。別の合言葉に変更してください。");
@@ -98,12 +122,8 @@
         document.getElementById('cam-status').innerText = "❌ 接続失敗";
       });
 
-      // 通信が切れたら自動再接続を試みる
-      peer.on('disconnected', () => {
-        peer.reconnect();
-      });
+      peer.on('disconnected', () => peer.reconnect());
 
-      // 親機からの接続を受け取る
       peer.on('connection', (conn) => {
         document.getElementById('cam-status').innerText = "🔵 親機を検出！映像送信中...";
         peer.call(conn.peer, localStream);
@@ -111,6 +131,28 @@
 
     } catch (err) {
       alert("カメラ起動エラー: " + err.message);
+    }
+  }
+
+  // 子機側の物理ライト（フラッシュ）制御
+  async function checkTorchSupport() {
+    if (!localStream) return;
+    const track = localStream.getVideoTracks()[0];
+    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+    if (capabilities.torch) {
+      document.getElementById('btn-torch').style.display = 'inline-block';
+    }
+  }
+
+  async function toggleTorch() {
+    if (!localStream) return;
+    const track = localStream.getVideoTracks()[0];
+    torchState = !torchState;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: torchState }] });
+      document.getElementById('btn-torch').innerText = torchState ? "💡 ライト消灯" : "💡 ライト点灯";
+    } catch (e) {
+      alert("ライトの切り替えに失敗しました");
     }
   }
 
@@ -123,34 +165,23 @@
     }
 
     document.getElementById('parent-status').innerText = "⏳ 子機を検索中...";
-
-    // iOS Safari対策：あらかじめvideoを再生準備状態にする
     videoElem.muted = true;
     videoElem.play().catch(() => {});
 
-    // 親機用のランダムIDでPeer接続
     if (!peer) {
       peer = new Peer(peerConfig);
     }
 
-    peer.on('open', () => {
-      sendRequest(targetId);
-    });
-
-    if (peer.open) {
-      sendRequest(targetId);
-    }
+    peer.on('open', () => sendRequest(targetId));
+    if (peer.open) sendRequest(targetId);
 
     peer.on('error', (err) => {
       if (err.type === 'peer-unavailable') {
         document.getElementById('parent-status').innerText = "❌ 子機が見つかりません";
-        alert("子機が見つかりません。子機側で『カメラ起動＆待機』が完了しているか確認してください。");
-      } else {
-        document.getElementById('parent-status').innerText = "❌ エラー: " + err.type;
+        alert("子機が見つかりません。子機側で『カメラ起動＆待機』を行ってください。");
       }
     });
 
-    // 折り返し映像を受信
     peer.on('call', (call) => {
       document.getElementById('parent-status').innerText = "📡 映像を受信中...";
       call.answer();
@@ -177,7 +208,34 @@
     document.getElementById('btn-unmute').style.display = "none";
     document.getElementById('parent-status').innerText = "🟢 映像・音声ともに再生中";
   }
+
+  // ③ 🌙 輝度・コントラスト（ナイトビュー）調整機能
+  function applyVideoFilter() {
+    const bright = document.getElementById('range-bright').value;
+    const contrast = document.getElementById('range-contrast').value;
+    
+    document.getElementById('val-bright').innerText = bright + '%';
+    document.getElementById('val-contrast').innerText = contrast + '%';
+
+    // ビデオ要素にリアルタイムCSSフィルタを適用
+    videoElem.style.filter = `brightness(${bright}%) contrast(${contrast}%)`;
+  }
+
+  function setNightPreset(enable) {
+    const rangeBright = document.getElementById('range-bright');
+    const rangeContrast = document.getElementById('range-contrast');
+
+    if (enable) {
+      rangeBright.value = 220;    // 明るさを2.2倍にアップ
+      rangeContrast.value = 150;  // 輪郭を少し強調
+    } else {
+      rangeBright.value = 100;    // 標準値
+      rangeContrast.value = 100;
+    }
+    applyVideoFilter();
+  }
 </script>
 
 </body>
 </html>
+
