@@ -45,14 +45,23 @@
 </div>
 
 <script>
-  // STUNサーバー（接続経路検索用）を拡張
+  // STUN / TURN（中継用）サーバーの設定
   const peer = new Peer({
     config: {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun.services.mozilla.com' }
+        // 無料パブリックTURNサーバー（中継機能）
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelay',
+          credential: 'openrelay'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelay',
+          credential: 'openrelay'
+        }
       ]
     }
   });
@@ -60,7 +69,6 @@
   let localStream = null;
   const videoElem = document.getElementById('video-player');
 
-  // 自分のID確定処理
   peer.on('open', (id) => {
     document.getElementById('my-id').innerText = id;
   });
@@ -75,8 +83,13 @@
   // ① 子機（カメラ）の処理
   async function startCamera() {
     try {
+      // iPhoneとAndroid両方で動作しやすい解像度設定
       localStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: { 
+          facingMode: "environment",
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        },
         audio: true
       });
       
@@ -87,11 +100,13 @@
       document.getElementById('cam-status').innerText = "🟢 カメラ起動中（親機からの接続待ち）";
       document.getElementById('btn-cam').disabled = true;
 
-      // 【折り返し接続】親機からデータリクエストを受け取ったら、子機から映像を発信する
+      // 親機からの接続要求を受け取る
       peer.on('connection', (conn) => {
         document.getElementById('cam-status').innerText = "🔵 親機を検出！映像を送信中...";
-        // 親機に向けて映像付きでCallする
-        peer.call(conn.peer, localStream);
+        // iPhone/Androidでコーデック互換性を高めて発信する
+        const call = peer.call(conn.peer, localStream, {
+          videoBandwidth: 500 // 通信量を抑えて安定化
+        });
       });
 
     } catch (err) {
@@ -109,25 +124,27 @@
 
     document.getElementById('parent-status').innerText = "⏳ 子機にリクエスト送信中...";
 
-    // 自動再生ブロック対策（事前にVideoを再生準備状態にする）
+    // iOS Safari対策：あらかじめvideo要素をロード状態にする
     videoElem.muted = true;
     videoElem.play().catch(() => {});
 
-    // 子機からの「折り返し映像着信」を待つ設定
+    // 折り返し着信を待つ
     peer.on('call', (call) => {
       document.getElementById('parent-status').innerText = "📡 映像を受信中...";
-      call.answer(); // 応答する
+      call.answer();
       
       call.on('stream', (remoteStream) => {
         document.getElementById('parent-status').innerText = "🟢 接続成功！映像表示中";
         videoElem.srcObject = remoteStream;
         videoElem.play().then(() => {
           document.getElementById('btn-unmute').style.display = "inline-block";
+        }).catch(err => {
+          console.log("再生エラー:", err);
         });
       });
     });
 
-    // 子機へ「データ接続リクエスト」を送信する
+    // 子機へ接続を通知
     const conn = peer.connect(targetId);
 
     conn.on('open', () => {
@@ -135,7 +152,7 @@
     });
 
     conn.on('error', (err) => {
-      document.getElementById('parent-status').innerText = "❌ 子機への接続に失敗しました";
+      document.getElementById('parent-status').innerText = "❌ 接続失敗";
     });
   }
 
